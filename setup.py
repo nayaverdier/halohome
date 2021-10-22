@@ -37,9 +37,9 @@ setup(
     license="MIT",
     packages=["halohome"],
     install_requires=[
-        "bluepy~=1.3",
+        "aiohttp~=3.7",
+        "bleak~=0.13",
         "csrmesh~=0.10",
-        "requests~=2.0",
     ],
     python_requires=">=3.7",
     extras_require={

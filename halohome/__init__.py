@@ -1,11 +1,10 @@
-import time
 from importlib import resources
-from multiprocessing import Pool
-from typing import List
+from typing import Iterable, List
 
+import aiohttp
+from bleak.exc import BleakError
 import csrmesh
-import requests
-from bluepy import btle
+from bleak import BleakClient
 
 VERSION = resources.read_text("halohome", "VERSION").strip()
 
@@ -21,127 +20,170 @@ def _format_mac_address(mac_address: str) -> str:
 
 
 class Device:
-    CHARACTERISTIC_LOW = btle.UUID("c4edc000-9daf-11e3-8003-00025b000b00")
-    CHARACTERISTIC_HIGH = btle.UUID("c4edc000-9daf-11e3-8004-00025b000b00")
-    KEY_SUFFIX = b"\x00\x4d\x43\x50"
+    def __init__(
+        self,
+        connection: "LocationConnection",
+        device_id: int,
+        device_name: str,
+        pid: str,
+        mac_address: str,
+    ):
+        self.connection = connection
+        self.device_id = device_id
+        self.device_name = device_name
+        self.pid = pid
+        self.mac_address = mac_address
 
-    def __init__(self, device: dict):
-        self.connection = device["connection"]
-        self.device_id = device["device_id"]
-        self.pid = device["pid"]
-        self.device_name = device["name"]
-        self.mac_address = _format_mac_address(device["friendly_mac_address"])
-        self.key = csrmesh.crypto.generate_key(device["passphrase"].encode("ascii") + self.KEY_SUFFIX)
-        self.peripheral = None
+    async def set_brightness(self, brightness: int) -> bool:
+        return await self.connection.set_brightness(self.device_id, brightness)
 
-    def _connect(self):
-        self.peripheral = btle.Peripheral(self.mac_address, addrType=btle.ADDR_TYPE_PUBLIC)
-        self._load_characteristics()
-
-    def _load_characteristics(self):
-        # extract the low/high characteristic handles to write data
-        characteristics = self.peripheral.getCharacteristics()
-        for characteristic in characteristics:
-            if characteristic.uuid == self.CHARACTERISTIC_LOW:
-                self.low_handle = characteristic.getHandle()
-            elif characteristic.uuid == self.CHARACTERISTIC_HIGH:
-                self.high_handle = characteristic.getHandle()
-
-    def set_brightness(self, brightness: int) -> bool:
-        packet = bytes([0x80 + self.device_id]) + b"\x80s\x00\n\x00\x00\x00" + bytes([brightness]) + bytes(4)
-        return self._send_packet(packet)
-
-    def _send_packet(self, packet: bytes) -> bool:
-        csrpacket = csrmesh.crypto.make_packet(self.key, csrmesh.crypto.random_seq(), packet)
-        low = csrpacket[:20]
-        high = csrpacket[20:]
-
-        start = time.monotonic()
-
-        while True:
-            # timeout after 10 seconds
-            if time.monotonic() - start >= 10:
-                return False
-
-            try:
-                if self.peripheral is None:
-                    self._connect()
-
-                self.peripheral.writeCharacteristic(self.low_handle, low, withResponse=True)  # type: ignore
-                self.peripheral.writeCharacteristic(self.high_handle, high, withResponse=True)  # type: ignore
-                return True
-            except Exception:
-                self.peripheral = None
-                time.sleep(0.1)
+    async def set_color_temp(self, color: int) -> bool:
+        return await self.connection.set_color_temp(self.device_id, color)
 
     def __repr__(self):
         return str(self)
 
     def __str__(self):
-        return f"Device<{self.device_name}, {self.mac_address}>"
+        return f"Device<{self.device_name} ({self.device_id}), {self.mac_address}>"
+
+
+class LocationConnection:
+    CHARACTERISTIC_LOW = "c4edc000-9daf-11e3-8003-00025b000b00"
+    CHARACTERISTIC_HIGH = "c4edc000-9daf-11e3-8004-00025b000b00"
+
+    def __init__(self, connection: "Connection", location_id: str, passphrase: str, timeout: int):
+        self.devices = []
+        self.connection = connection
+        self.location_id = location_id
+        self.key = csrmesh.crypto.generate_key(passphrase.encode("ascii") + b"\x00\x4d\x43\x50")
+        self.timeout = timeout
+
+    @classmethod
+    async def create(
+        cls,
+        connection: "Connection",
+        location_id: str,
+        passphrase: str,
+        product_ids: Iterable[int],
+        timeout: int,
+    ) -> "LocationConnection":
+        instance = cls(connection, location_id, passphrase, timeout)
+
+        response = await connection._request(f"locations/{location_id}/abstract_devices")
+        raw_devices = response["abstract_devices"]
+        device_id_offset = None
+        for raw_device in raw_devices:
+            if raw_device["product_id"] not in product_ids:
+                continue
+
+            device_id_offset = device_id_offset or raw_device["avid"]
+
+            device_id = raw_device["avid"] - device_id_offset
+            pid = raw_device["pid"]
+            device_name = raw_device["name"]
+            mac_address = _format_mac_address(raw_device["friendly_mac_address"])
+
+            device = Device(instance, device_id, device_name, pid, mac_address)
+            instance.devices.append(device)
+
+        return instance
+
+    async def _connect(self):
+        for device in self.devices:
+            try:
+                client = BleakClient(device.mac_address, timeout=self.timeout)
+                await client.connect()
+                self.mesh_connection = client
+                return
+            except BleakError:
+                pass
+
+    async def _send_packet(self, packet: bytes) -> bool:
+        csrpacket = csrmesh.crypto.make_packet(self.key, csrmesh.crypto.random_seq(), packet)
+        low = csrpacket[:20]
+        high = csrpacket[20:]
+
+        tries = 3
+        while tries > 0:
+            tries -= 1
+
+            try:
+                if self.mesh_connection is None:
+                    await self._connect()
+
+                await self.mesh_connection.write_gatt_char(self.CHARACTERISTIC_LOW, low)
+                await self.mesh_connection.write_gatt_char(self.CHARACTERISTIC_HIGH, high)
+                return True
+            except Exception:
+                self.mesh_connection = None
+
+        return False
+
+    async def set_brightness(self, device_id: int, brightness: int) -> bool:
+        packet = bytes([0x80 + device_id, 0x80, 0x73, 0, 0x0A, 0, 0, 0, brightness, 0, 0, 0, 0])
+        # packet = bytes([0x80 + device_id]) + b"\x80s\x00\x0a\x00\x00\x00" + bytes([brightness]) + bytes(4)
+        return await self._send_packet(packet)
+
+    async def set_color_temp(self, device_id: int, color: int) -> bool:
+        color_bytes = bytearray(color.to_bytes(2, byteorder="big"))
+        packet = bytes([0x80 + device_id, 0x80, 0x73, 0, 0x1D, 0, 0, 0, 0x01, *color_bytes, 0, 0])
+        return await self._send_packet(packet)
 
 
 class Connection:
-    def __init__(self, auth_token: str, host: str, product_ids: List[int], timeout: int):
+    def __init__(self, auth_token: str, host: str, product_ids: Iterable[int], timeout: int):
         self.auth_token = auth_token
         self.host = host
         self.product_ids = product_ids
         self.timeout = timeout
 
-    def list_devices(self):
+    async def list_devices(self):
         devices = []
 
-        device_id_offset = None
-        for location in self._locations():
+        for location in await self._locations():
             location_id = str(location["id"])
-            for device in self._location_devices(location_id):
-                if device["product_id"] in self.product_ids:
-                    if device_id_offset is None:
-                        device_id_offset = device["avid"]
+            location_connection = await LocationConnection.create(
+                self,
+                location_id,
+                location["passphrase"],
+                self.product_ids,
+                self.timeout,
+            )
+            devices.extend(location_connection.devices)
 
-                    device["connection"] = self
-                    device["passphrase"] = location["passphrase"]
-                    device["device_id"] = device["avid"] - device_id_offset
-                    devices.append(device)
+        return devices
 
-        with Pool(25) as pool:
-            return pool.map(Device, devices)
+    async def _locations(self) -> List[dict]:
+        response = await self._request("locations")
+        return response["locations"]
 
-    def _locations(self) -> List[dict]:
-        return self._request("locations")["locations"]
-
-    def _location_devices(self, location_id: str) -> List[dict]:
-        return self._request(f"locations/{location_id}/abstract_devices")["abstract_devices"]
-
-    def _request(self, path: str, body: dict = None):
-        method = "GET" if body is None else "POST"
-        url = self.host + path
+    async def _request(self, path: str, body: dict = None):
         headers = {"Authorization": f"Token {self.auth_token}", "Accept": "application/api.avi-on.v2"}
+        return await make_request(self.host, path, body, headers, self.timeout)
 
-        return requests.request(method, url, headers=headers, json=body, timeout=self.timeout).json()
+
+async def make_request(host: str, path: str, body: dict = None, headers: dict = None, timeout: int = 5):
+    method = "GET" if body is None else "POST"
+    url = host + path
+
+    async with aiohttp.ClientSession() as session:
+        async with session.request(method, url, json=body, headers=headers, timeout=timeout) as response:
+            return await response.json()
 
 
-def connect(
+async def connect(
     email: str,
     password: str,
     host: str = "https://api.avi-on.com",
-    product_ids: List[int] = None,
+    product_ids: Iterable[int] = (93,),
     timeout: int = 5,
 ):
     if not host.endswith("/"):
         host += "/"
 
-    if product_ids is None:
-        product_ids = [93]
-
-    login_url = host + "sessions"
     login_body = {"email": email, "password": password}
+    response = await make_request(host, "sessions", login_body, timeout=timeout)
 
-    response = requests.post(login_url, json=login_body, timeout=timeout)
-
-    if response.status_code >= 300:
-        raise Exception("Unable to login to Avi-On: {response.text}")
-
-    auth_token = response.json()["credentials"]["auth_token"]
+    auth_token = response["credentials"]["auth_token"]
 
     return Connection(auth_token, host, product_ids, timeout)
