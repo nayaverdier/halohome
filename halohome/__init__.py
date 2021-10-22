@@ -2,9 +2,9 @@ from importlib import resources
 from typing import Iterable, List
 
 import aiohttp
-from bleak.exc import BleakError
 import csrmesh
 from bleak import BleakClient
+from bleak.exc import BleakError
 
 VERSION = resources.read_text("halohome", "VERSION").strip()
 
