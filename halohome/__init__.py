@@ -54,6 +54,7 @@ class LocationConnection:
     def __init__(self, connection: "Connection", location_id: str, passphrase: str, timeout: int):
         self.devices = []
         self.connection = connection
+        self.mesh_connection = None
         self.location_id = location_id
         self.key = csrmesh.crypto.generate_key(passphrase.encode("ascii") + b"\x00\x4d\x43\x50")
         self.timeout = timeout
@@ -121,7 +122,6 @@ class LocationConnection:
 
     async def set_brightness(self, device_id: int, brightness: int) -> bool:
         packet = bytes([0x80 + device_id, 0x80, 0x73, 0, 0x0A, 0, 0, 0, brightness, 0, 0, 0, 0])
-        # packet = bytes([0x80 + device_id]) + b"\x80s\x00\x0a\x00\x00\x00" + bytes([brightness]) + bytes(4)
         return await self._send_packet(packet)
 
     async def set_color_temp(self, device_id: int, color: int) -> bool:
@@ -131,8 +131,9 @@ class LocationConnection:
 
 
 class Connection:
-    def __init__(self, auth_token: str, host: str, product_ids: Iterable[int], timeout: int):
+    def __init__(self, auth_token: str, user_id: int, host: str, product_ids: Iterable[int], timeout: int):
         self.auth_token = auth_token
+        self.user_id = user_id
         self.host = host
         self.product_ids = product_ids
         self.timeout = timeout
@@ -158,13 +159,23 @@ class Connection:
         return response["locations"]
 
     async def _request(self, path: str, body: dict = None):
-        headers = {"Authorization": f"Token {self.auth_token}", "Accept": "application/api.avi-on.v2"}
-        return await make_request(self.host, path, body, headers, self.timeout)
+        return await make_request(self.host, path, body, self.auth_token, self.timeout)
 
 
-async def make_request(host: str, path: str, body: dict = None, headers: dict = None, timeout: int = 5):
+async def make_request(
+    host: str,
+    path: str,
+    body: dict = None,
+    auth_token: str = None,
+    timeout: int = 5,
+):
     method = "GET" if body is None else "POST"
     url = host + path
+
+    headers = {}
+    if auth_token:
+        headers["Accept"] = "application/api.avi-on.v2"
+        headers["Authorization"] = f"Token {auth_token}"
 
     async with aiohttp.ClientSession() as session:
         async with session.request(method, url, json=body, headers=headers, timeout=timeout) as response:
@@ -184,6 +195,16 @@ async def connect(
     login_body = {"email": email, "password": password}
     response = await make_request(host, "sessions", login_body, timeout=timeout)
 
+    if "credentials" not in response:
+        raise HaloHomeError("Invalid credentials for HALO Home")
+
     auth_token = response["credentials"]["auth_token"]
 
-    return Connection(auth_token, host, product_ids, timeout)
+    user_response = await make_request(host, "user", auth_token=auth_token, timeout=timeout)
+
+    if "user" not in user_response:
+        raise HaloHomeError("Unexpected error reading HALO Home user data")
+
+    user_id = user_response["user"]["id"]
+
+    return Connection(auth_token, user_id, host, product_ids, timeout)
