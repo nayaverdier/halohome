@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0 2021-11-08
+
+(BREAKING)
+
+- Remove support for `user_id` (username/email is sufficient)
+- Support offline loading of devices (e.g. in case of internet outage)
+
 ## 0.3.0 2021-10-25
 
 - Read `user_id` to provide a permanent ID for the HALO Home account
