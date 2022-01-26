@@ -10,9 +10,6 @@ readme = (ROOT_DIRECTORY / "README.md").read_text()
 changelog = (ROOT_DIRECTORY / "CHANGELOG.md").read_text()
 long_description = readme + "\n\n" + changelog
 
-version = (ROOT_DIRECTORY / "halohome" / "VERSION").read_text().strip()
-
-
 DEV_REQUIRES = [
     "black==21.9b0",
     "flake8==4.0.1",
@@ -24,7 +21,7 @@ DEV_REQUIRES = [
 
 setup(
     name="halohome",
-    version=version,
+    version="0.5.0",
     description=description,
     long_description=long_description,
     long_description_content_type="text/markdown",

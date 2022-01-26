@@ -1,15 +1,18 @@
-from importlib import resources
+import logging
+from importlib import metadata
 from typing import Iterable, List
 
 import aiohttp
 import csrmesh
-from bleak import BleakClient
+from bleak import BleakClient, BleakScanner
 from bleak.exc import BleakError
 
-VERSION = resources.read_text("halohome", "VERSION").strip()
+VERSION = metadata.version("halohome")
 HOST = "https://api.avi-on.com"
 PRODUCT_IDS = (93,)
 TIMEOUT = 5
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class HaloHomeError(Exception):
@@ -17,7 +20,7 @@ class HaloHomeError(Exception):
 
 
 def _format_mac_address(mac_address: str) -> str:
-    iterator = iter(mac_address)
+    iterator = iter(mac_address.lower())
     pairs = zip(iterator, iterator)
     return ":".join(a + b for a, b in pairs)
 
@@ -69,8 +72,20 @@ class LocationConnection:
             device = Device(self, device_id, device_name, pid, mac_address)
             self.devices.append(device)
 
+    async def _priority_devices(self):
+        scanned_devices = sorted(await BleakScanner.discover(), key=lambda d: d.rssi)
+        sorted_addresses = [d.address.lower() for d in scanned_devices]
+
+        def priority(device: Device):
+            try:
+                return sorted_addresses.index(device.mac_address)
+            except ValueError:
+                return -1
+
+        return sorted(self.devices, key=priority, reverse=True)
+
     async def _connect(self):
-        for device in self.devices:
+        for device in await self._priority_devices():
             try:
                 client = BleakClient(device.mac_address, timeout=self.timeout)
                 await client.connect()
@@ -84,10 +99,7 @@ class LocationConnection:
         low = csrpacket[:20]
         high = csrpacket[20:]
 
-        tries = 3
-        while tries > 0:
-            tries -= 1
-
+        for _ in range(3):
             try:
                 if self.mesh_connection is None:
                     await self._connect()
@@ -97,6 +109,7 @@ class LocationConnection:
                 return True
             except Exception:
                 self.mesh_connection = None
+                _LOGGER.exception("Caught exception connecting to device")
 
         return False
 

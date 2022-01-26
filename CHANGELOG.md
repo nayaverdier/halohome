@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.0 2022-01-25
+
+- Sort devices by RSSI before connecting to avoid unnecessary delay
+
 ## 0.4.0 2021-11-08
 
 (BREAKING)
