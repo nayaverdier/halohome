@@ -2,7 +2,6 @@ from pathlib import Path
 
 from setuptools import setup
 
-
 ROOT_DIRECTORY = Path(__file__).resolve().parent
 
 description = "A python library to control Eaton HALO Home Smart Lights"
@@ -11,7 +10,7 @@ changelog = (ROOT_DIRECTORY / "CHANGELOG.md").read_text()
 long_description = readme + "\n\n" + changelog
 
 DEV_REQUIRES = [
-    "black==24.10.0",
+    "black==23.3.0",
     "flake8==7.1.1",
     "flake8-bugbear==24.10.31",
     "isort==5.13.2",
