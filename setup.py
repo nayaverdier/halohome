@@ -11,12 +11,12 @@ changelog = (ROOT_DIRECTORY / "CHANGELOG.md").read_text()
 long_description = readme + "\n\n" + changelog
 
 DEV_REQUIRES = [
-    "black==21.9b0",
-    "flake8==4.0.1",
-    "flake8-bugbear==21.9.2",
-    "isort==5.9.3",
-    "twine==3.4.2",
-    "wheel==0.37.0",
+    "black==24.10.0",
+    "flake8==7.1.1",
+    "flake8-bugbear==24.10.31",
+    "isort==5.13.2",
+    "twine==5.1.1",
+    "wheel==0.45.0",
 ]
 
 setup(

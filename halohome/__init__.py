@@ -1,6 +1,6 @@
 import logging
 from importlib import metadata
-from typing import Iterable, List
+from typing import List
 
 import aiohttp
 import csrmesh
@@ -100,19 +100,21 @@ class LocationConnection:
 
         target_bytes = bytearray(target_id.to_bytes(2, byteorder="big"))
         group_bytes = bytearray(group_id.to_bytes(2, byteorder="big"))
-        return bytes([
-            target_bytes[1], 
-            target_bytes[0], 
-            115, 
-            0, # verb 
-            noun,
-            group_bytes[0],
-            group_bytes[1],
-            0, # id
-            *value_bytes,
-            0,
-            0
-        ])
+        return bytes(
+            [
+                target_bytes[1],
+                target_bytes[0],
+                115,
+                0,  # verb
+                noun,
+                group_bytes[0],
+                group_bytes[1],
+                0,  # id
+                *value_bytes,
+                0,
+                0,
+            ]
+        )
 
     async def _send_packet(self, packet: bytes) -> bool:
         csrpacket = csrmesh.crypto.make_packet(self.key, csrmesh.crypto.random_seq(), packet)
@@ -140,6 +142,7 @@ class LocationConnection:
     async def set_color_temp(self, device_id: int, color: int) -> bool:
         packet = self._create_packet(device_id, 0x1D, bytes([0x01, *bytearray(color.to_bytes(2, byteorder="big"))]))
         return await self._send_packet(packet)
+
 
 class Connection:
     def __init__(self, location_devices: List[dict], timeout: int = TIMEOUT):
@@ -171,9 +174,7 @@ async def _make_request(
             return await response.json()
 
 
-async def _load_devices(
-    host: str, auth_token: str, location_id: str, timeout: int
-) -> List[dict]:
+async def _load_devices(host: str, auth_token: str, location_id: str, timeout: int) -> List[dict]:
     response = await _make_request(
         host, f"locations/{location_id}/abstract_devices", auth_token=auth_token, timeout=timeout
     )
@@ -182,7 +183,7 @@ async def _load_devices(
 
     for raw_device in raw_devices:
         if raw_device["type"] != "device":
-            continue;
+            continue
 
         device_id = raw_device["avid"]
         device_name = raw_device["name"]
@@ -193,17 +194,18 @@ async def _load_devices(
     return devices
 
 
-async def  _load_location(host: str, auth_token: str, location_id: int, timeout: int) -> dict:
+async def _load_location(host: str, auth_token: str, location_id: int, timeout: int) -> dict:
     response = await _make_request(host, f"locations/{location_id}", auth_token=auth_token, timeout=timeout)
     raw_location = response["location"]
     devices = await _load_devices(host, auth_token, location_id, timeout)
     return {"location_id": raw_location["pid"], "passphrase": raw_location["passphrase"], "devices": devices}
 
+
 async def _load_locations(host: str, auth_token: str, timeout: int) -> List[dict]:
     response = await _make_request(host, "user/locations", auth_token=auth_token, timeout=timeout)
     locations = []
     for raw_location in response["locations"]:
-        location = await  _load_location(host, auth_token, raw_location["pid"], timeout) 
+        location = await _load_location(host, auth_token, raw_location["pid"], timeout)
         locations.append(location)
 
     return locations
