@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from importlib import metadata
 from typing import List
@@ -24,38 +25,56 @@ def _format_mac_address(mac_address: str) -> str:
     return ":".join(a + b for a, b in pairs)
 
 
-class Device:
+class Entity:
     def __init__(
         self,
         location: "LocationConnection",
-        device_id: int,
-        device_name: str,
-        mac_address: str,
+        avid: int,
+        name: str,
     ):
         self.location = location
-        self.device_id = device_id
-        self.device_name = device_name
-        self.mac_address = mac_address
+        self.avid = avid
+        self.name = name
 
     async def set_brightness(self, brightness: int) -> bool:
-        return await self.location.set_brightness(self.device_id, brightness)
+        return await self.location.set_brightness(self.avid, brightness)
 
     async def set_color_temp(self, color: int) -> bool:
-        return await self.location.set_color_temp(self.device_id, color)
-
-    def __str__(self):
-        return f"Device<{self.device_name} ({self.device_id}), {self.mac_address}>"
+        return await self.location.set_color_temp(self.avid, color)
 
     def __repr__(self):
         return str(self)
+
+
+class Device(Entity):
+    def __init__(
+        self,
+        location: "LocationConnection",
+        avid: int,
+        name: str,
+        mac_address: str,
+    ):
+        super().__init__(location, avid, name)
+        self.mac_address = mac_address
+
+    def __str__(self):
+        return f"Device<{self.name} ({self.avid}), {self.mac_address}>"
+
+
+class Group(Entity):
+    def __str__(self):
+        return f"Group<{self.name} ({self.avid})>"
 
 
 class LocationConnection:
     CHARACTERISTIC_LOW = "c4edc000-9daf-11e3-8003-00025b000b00"
     CHARACTERISTIC_HIGH = "c4edc000-9daf-11e3-8004-00025b000b00"
 
-    def __init__(self, location_id: str, passphrase: str, devices: List[dict], timeout: int = TIMEOUT):
+    def __init__(
+        self, location_id: str, passphrase: str, devices: List[dict], groups: List[dict], timeout: int = TIMEOUT
+    ):
         self.devices = []
+        self.groups = []
         self.mesh_connection = None
         self.location_id = location_id
         self.key = csrmesh.crypto.generate_key(passphrase.encode("ascii") + b"\x00\x4d\x43\x50")
@@ -67,6 +86,12 @@ class LocationConnection:
             mac_address = raw_device["mac_address"]
             device = Device(self, device_id, device_name, mac_address)
             self.devices.append(device)
+
+        for raw_group in groups:
+            group_id = raw_group["group_id"]
+            group_name = raw_group["group_name"]
+            group = Group(self, group_id, group_name)
+            self.groups.append(group)
 
     async def _priority_devices(self):
         scanned_devices = await BleakScanner.discover(return_adv=True)
@@ -145,13 +170,15 @@ class LocationConnection:
 
 
 class Connection:
-    def __init__(self, location_devices: List[dict], timeout: int = TIMEOUT):
+    def __init__(self, locations: List[dict], timeout: int = TIMEOUT):
         self.devices = []
+        self.groups = []
         self.timeout = timeout
 
-        for raw_location in location_devices:
+        for raw_location in locations:
             location = LocationConnection(**raw_location)
             self.devices.extend(location.devices)
+            self.groups.extend(location.groups)
 
 
 async def _make_request(
@@ -194,11 +221,32 @@ async def _load_devices(host: str, auth_token: str, location_id: str, timeout: i
     return devices
 
 
+async def _load_groups(host: str, auth_token: str, location_id: str, timeout: int) -> List[dict]:
+    response = await _make_request(host, f"locations/{location_id}/groups", auth_token=auth_token, timeout=timeout)
+    raw_groups = response["groups"]
+    groups = []
+
+    for raw_group in raw_groups:
+        group_id = raw_group["avid"]
+        group_name = raw_group["name"]
+        group = {"group_id": group_id, "group_name": group_name}
+        groups.append(group)
+
+    return groups
+
+
 async def _load_location(host: str, auth_token: str, location_id: int, timeout: int) -> dict:
     response = await _make_request(host, f"locations/{location_id}", auth_token=auth_token, timeout=timeout)
     raw_location = response["location"]
-    devices = await _load_devices(host, auth_token, location_id, timeout)
-    return {"location_id": raw_location["pid"], "passphrase": raw_location["passphrase"], "devices": devices}
+    devices, groups = await asyncio.gather(
+        _load_devices(host, auth_token, location_id, timeout), _load_groups(host, auth_token, location_id, timeout)
+    )
+    return {
+        "location_id": raw_location["pid"],
+        "passphrase": raw_location["passphrase"],
+        "devices": devices,
+        "groups": groups,
+    }
 
 
 async def _load_locations(host: str, auth_token: str, timeout: int) -> List[dict]:
