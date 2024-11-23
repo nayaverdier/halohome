@@ -14,7 +14,7 @@ DEV_REQUIRES = [
     "flake8==5.0.4",
     "flake8-bugbear==23.3.12",
     "isort==5.11.5",
-    "twine==5.0.2",
+    "twine==4.0.2",
     "wheel==0.42.0",
 ]
 
