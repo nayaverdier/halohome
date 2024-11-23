@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0 2024-11-22
+
+Courtesy of @oyvindkinsey:
+
+- Update the use of Avi-on's API to the current v3
+- Fix incorrect use of avid (this now also supports groups etc)
+- Add new function for constructing packets that work for both devices and groups
+- Remove use of deprecated BLEDevices.rssi
+- Replaced product_ids filtering with a type filter
+
 ## 0.5.0 2022-01-25
 
 - Sort devices by RSSI before connecting to avoid unnecessary delay
