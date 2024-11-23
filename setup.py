@@ -12,7 +12,7 @@ long_description = readme + "\n\n" + changelog
 DEV_REQUIRES = [
     "black==23.3.0",
     "flake8==5.0.4",
-    "flake8-bugbear==24.10.31",
+    "flake8-bugbear==23.3.12",
     "isort==5.11.5",
     "twine==5.1.1",
     "wheel==0.42.0",
