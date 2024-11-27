@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0 2024-11-26
+
+Courtesy of @oyvindkinsey:
+
+- Add support for fetching groups from Avi-on's API
+
+### Breaking changes
+- device.device_id is now device.avid to better reflect the underlying datamodel
+
 ## 0.6.0 2024-11-22
 
 Courtesy of @oyvindkinsey:
